@@ -10,6 +10,7 @@ from rich import print as rprint
 
 # create a typer app
 app = typer.Typer()
+fly_path = os.getenv("FLY_BIN")
 
 
 @app.command()
@@ -23,7 +24,8 @@ def fly_db_connect(app_name="app-name", bg: int = 0):
     _bg = bg == 1
     rprint(f"[green]Connecting to the database: Running in the background: {_bg}")
     try:
-        return sh.fly("proxy", "5433:5432", app=app_name, _out=rprint, _bg=_bg)
+        cmd = sh.Command(fly_path)
+        return cmd("proxy", "5433:5432", app=app_name, _out=rprint, _bg=_bg)
     except sh.ErrorReturnCode as e:
         rprint(e)
 
@@ -31,25 +33,26 @@ def fly_db_connect(app_name="app-name", bg: int = 0):
 @app.command()
 def fly_db_backup(
     app_name: str,
-    password=None,
-    db_name="tankobon",
+    db_name: str,
     port=5433,
     user="postgres",
     host="localhost",
 ):
     """Connect to fly.io and backup the database"""
-    password = password or os.getenv("TANKOBON_PG_PASSWORD")
     db_connection = None
     try:
         rprint("[green] Backing up the database")
         # start timer
         start = time.time()
         db_connection = fly_db_connect(app_name=app_name, bg=1)
+
         # wait for the connection here
-        time.sleep(3)
-        
-        filename = f"tankobon-backup-{datetime.now().timestamp()}.sql"
-        rprint(f"[green]Backing up the database to {filename}, please wait...")
+        time.sleep(10)
+
+        filename = "fly-backup.sql"
+        tmp_filename = "fly-backup.tmp.sql"
+
+        rprint(f"[green]Backing up the database to {tmp_filename}, please wait...")
         process = sh.pg_dump(
             "-h",
             host,
@@ -58,13 +61,20 @@ def fly_db_backup(
             "-U",
             user,
             "-f",
-            filename,
+            tmp_filename,
             db_name,
             _out=rprint,
-            _in=password,
             _bg=False,
         )
         rprint(process)
+
+        # If the process was successful
+        if os.path.exists(tmp_filename):
+            # Delete the old backup file if there is one
+            if os.path.exists(filename):
+                os.remove(filename)
+            # Move the tmp backup to be the main backup
+            os.rename(tmp_filename, filename)
 
         # end timer
         end = time.time()
